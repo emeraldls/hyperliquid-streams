@@ -17,7 +17,7 @@ type OrderBookRow = {
   price: number;
   size: number;
   cumulative: number;
-  depthPct: number;
+  depthPct?: number;
 };
 
 interface OrderBookPanelProps {
