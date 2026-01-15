@@ -30,15 +30,15 @@ function eventToRow(event: GammaEvent): EventRow {
     start_date: event.startDate ?? null,
     end_date: event.endDate ?? null,
     image_url: event.image ?? null,
-    active: event.active ? 1 : 0,
-    closed: event.closed ? 1 : 0,
+    active: event.active ?? true,
+    closed: event.closed ?? false,
     created_at: event.createdAt ?? new Date().toISOString(),
     updated_at: new Date().toISOString(),
     raw_data: JSON.stringify(event),
   };
 }
 
-// Helper to safely stringify a value for SQLite
+// Helper to safely stringify a value for DB
 function toJsonString(value: unknown): string | null {
   if (value === null || value === undefined) {
     return null;
@@ -66,8 +66,8 @@ function marketToRow(market: GammaMarket, eventId?: string): MarketRow {
     outcomes: toJsonString(market.outcomes),
     outcome_prices: toJsonString(market.outcomePrices),
     token_ids: toJsonString(market.clobTokenIds),
-    active: market.active ? 1 : 0,
-    closed: market.closed ? 1 : 0,
+    active: market.active ?? true,
+    closed: market.closed ?? false,
     volume: market.volume ?? null,
     liquidity: market.liquidity ?? null,
     created_at: market.createdAt ?? new Date().toISOString(),
@@ -80,7 +80,7 @@ function marketToRow(market: GammaMarket, eventId?: string): MarketRow {
 export async function syncEvents(): Promise<number> {
   console.log("[SyncService] Starting events sync...");
 
-  const db = getPolymarketDB();
+  const db = await getPolymarketDB();
   const startTime = Date.now();
 
   try {
@@ -97,21 +97,21 @@ export async function syncEvents(): Promise<number> {
         continue;
       }
       const eventRow = eventToRow(event);
-      db.upsertEvent(eventRow);
+      await db.upsertEvent(eventRow);
       eventCount++;
 
       // Also store markets embedded in events
       if (event.markets && event.markets.length > 0) {
         for (const market of event.markets) {
           const marketRow = marketToRow(market as GammaMarket, event.id);
-          db.upsertMarket(marketRow);
+          await db.upsertMarket(marketRow);
           marketCount++;
         }
       }
     }
 
     // Update sync state
-    db.setSyncState("events_last_sync", new Date().toISOString());
+    await db.setSyncState("events_last_sync", new Date().toISOString());
 
     const duration = Date.now() - startTime;
     console.log(
@@ -129,7 +129,7 @@ export async function syncEvents(): Promise<number> {
 export async function syncMarkets(): Promise<number> {
   console.log("[SyncService] Starting markets sync...");
 
-  const db = getPolymarketDB();
+  const db = await getPolymarketDB();
   const startTime = Date.now();
 
   try {
@@ -139,12 +139,12 @@ export async function syncMarkets(): Promise<number> {
 
     for (const market of markets) {
       const marketRow = marketToRow(market);
-      db.upsertMarket(marketRow);
+      await db.upsertMarket(marketRow);
       marketCount++;
     }
 
     // Update sync state
-    db.setSyncState("markets_last_sync", new Date().toISOString());
+    await db.setSyncState("markets_last_sync", new Date().toISOString());
 
     const duration = Date.now() - startTime;
     console.log(
@@ -162,7 +162,7 @@ export async function syncMarkets(): Promise<number> {
 export async function backfillPriceHistory(tokenId: string): Promise<number> {
   console.log(`[SyncService] Backfilling price history for token: ${tokenId}`);
 
-  const db = getPolymarketDB();
+  const db = await getPolymarketDB();
   const startTime = Date.now();
 
   try {
@@ -173,7 +173,7 @@ export async function backfillPriceHistory(tokenId: string): Promise<number> {
     let candleCount = 0;
     for (const point of priceHistory) {
       // Create 1m candle from price point
-      db.upsertCandle({
+      await db.upsertCandle({
         token_id: tokenId,
         timestamp: point.t,
         interval: "1m",
@@ -209,7 +209,7 @@ export async function backfillPriceHistory(tokenId: string): Promise<number> {
 export async function backfillTrades(tokenId: string): Promise<number> {
   console.log(`[SyncService] Backfilling trades for token: ${tokenId}`);
 
-  const db = getPolymarketDB();
+  const db = await getPolymarketDB();
   const startTime = Date.now();
 
   try {
@@ -217,7 +217,7 @@ export async function backfillTrades(tokenId: string): Promise<number> {
 
     let tradeCount = 0;
     for (const trade of trades) {
-      db.insertTrade({
+      await db.insertTrade({
         id: trade.id,
         token_id: trade.asset_id,
         price: parseFloat(trade.price),
@@ -284,9 +284,9 @@ export async function runFullSync(): Promise<void> {
 }
 
 // Check if data is stale and needs refresh
-export function isDataStale(key: "markets" | "events"): boolean {
-  const db = getPolymarketDB();
-  const lastSync = db.getSyncState(`${key}_last_sync`);
+export async function isDataStale(key: "markets" | "events"): Promise<boolean> {
+  const db = await getPolymarketDB();
+  const lastSync = await db.getSyncState(`${key}_last_sync`);
 
   if (!lastSync) {
     return true;
@@ -347,16 +347,16 @@ export function stopSyncJobs(): void {
 }
 
 // Get sync status
-export function getSyncStatus(): {
+export async function getSyncStatus(): Promise<{
   eventsLastSync: string | null;
   marketsLastSync: string | null;
   isCurrentlySyncing: boolean;
-} {
-  const db = getPolymarketDB();
+}> {
+  const db = await getPolymarketDB();
 
   return {
-    eventsLastSync: db.getSyncState("events_last_sync"),
-    marketsLastSync: db.getSyncState("markets_last_sync"),
+    eventsLastSync: await db.getSyncState("events_last_sync"),
+    marketsLastSync: await db.getSyncState("markets_last_sync"),
     isCurrentlySyncing: isSyncing,
   };
 }

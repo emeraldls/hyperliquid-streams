@@ -227,7 +227,7 @@ function handleUnsubscribe(ws: WebSocket, tokenIds: string[]) {
 }
 
 // Handle get_orderbook request
-function handleGetOrderbook(ws: WebSocket, tokenId: string) {
+async function handleGetOrderbook(ws: WebSocket, tokenId: string) {
   if (!tokenId) {
     sendToClient(ws, {
       type: "error",
@@ -250,8 +250,8 @@ function handleGetOrderbook(ws: WebSocket, tokenId: string) {
   }
 
   // Try to get from database
-  const db = getPolymarketDB();
-  const snapshot = db.getLatestOrderbookSnapshot(tokenId);
+  const db = await getPolymarketDB();
+  const snapshot = await db.getLatestOrderbookSnapshot(tokenId);
 
   if (snapshot) {
     try {
@@ -294,10 +294,10 @@ function handleClientDisconnect(ws: WebSocket) {
 function setupPolymarketListeners() {
   const pmClient = getPolymarketWSClient();
 
-  // Note: Market data events (price, orderbook, trade, best_bid_ask) 
+  // Note: Market data events (price, orderbook, trade, best_bid_ask)
   // are now handled directly by SubscriptionManager called from PolymarketWSClient.
   // We only listen for connection events here if needed.
-  
+
   pmClient.on("error", (err) => {
     console.error("[PolymarketWSServer] Polymarket WS Client error:", err);
   });

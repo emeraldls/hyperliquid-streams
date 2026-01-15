@@ -1,4 +1,6 @@
 // Polymarket API Configuration
+import dotenv from "dotenv";
+dotenv.config();
 
 export const POLYMARKET_CONFIG = {
   // API Base URLs
@@ -39,9 +41,9 @@ export const POLYMARKET_CONFIG = {
     maxLimit: 100,
   },
 
-  // Database path
+  // Database URL (PostgreSQL)
   database: {
-    path: "polymarket.db",
+    url: process.env.DATABASE_URL || "",
   },
 } as const;
 

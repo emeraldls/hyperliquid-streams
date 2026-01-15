@@ -14,8 +14,8 @@ import {
 } from "../config";
 
 // Process a single trade into 1m candle
-export function processTradeIntoCandle(trade: TradeRow): void {
-  const db = getPolymarketDB();
+export async function processTradeIntoCandle(trade: TradeRow): Promise<void> {
+  const db = await getPolymarketDB();
 
   // Get the start of the 1-minute candle
   const candleTimestamp = getIntervalStart(
@@ -24,11 +24,11 @@ export function processTradeIntoCandle(trade: TradeRow): void {
   );
 
   // Get existing candle or create new one
-  const existingCandle = db.getLatestCandle(trade.token_id, "1m");
+  const existingCandle = await db.getLatestCandle(trade.token_id, "1m");
 
   if (existingCandle && existingCandle.timestamp === candleTimestamp) {
     // Update existing candle
-    db.upsertCandle({
+    await db.upsertCandle({
       token_id: trade.token_id,
       timestamp: candleTimestamp,
       interval: "1m",
@@ -41,7 +41,7 @@ export function processTradeIntoCandle(trade: TradeRow): void {
     });
   } else {
     // Create new candle
-    db.upsertCandle({
+    await db.upsertCandle({
       token_id: trade.token_id,
       timestamp: candleTimestamp,
       interval: "1m",
@@ -66,7 +66,7 @@ export async function processTradesIntoCandles(
     `[CandleService] Processing ${trades.length} trades into candles for ${tokenId}`
   );
 
-  const db = getPolymarketDB();
+  const db = await getPolymarketDB();
 
   // Group trades by 1-minute intervals
   const candleMap = new Map<
@@ -112,22 +112,20 @@ export async function processTradesIntoCandles(
     }
   }
 
-  // Insert all candles in a transaction
-  db.transaction(() => {
-    for (const [timestamp, candle] of candleMap) {
-      db.upsertCandle({
-        token_id: tokenId,
-        timestamp,
-        interval: "1m",
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        volume: candle.volume,
-        trade_count: candle.trade_count,
-      });
-    }
-  });
+  // Insert all candles
+  for (const [timestamp, candle] of candleMap) {
+    await db.upsertCandle({
+      token_id: tokenId,
+      timestamp,
+      interval: "1m",
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume,
+      trade_count: candle.trade_count,
+    });
+  }
 
   console.log(
     `[CandleService] Created/updated ${candleMap.size} 1m candles for ${tokenId}`
@@ -138,14 +136,14 @@ export async function processTradesIntoCandles(
 }
 
 // Aggregate candles from smaller to larger timeframes
-export function aggregateCandles(
+export async function aggregateCandles(
   tokenId: string,
   sourceInterval: CandleInterval,
   targetInterval: CandleInterval,
   startTime?: number,
   endTime?: number
-): number {
-  const db = getPolymarketDB();
+): Promise<number> {
+  const db = await getPolymarketDB();
 
   const sourceSeconds = CANDLE_INTERVALS[sourceInterval];
   const targetSeconds = CANDLE_INTERVALS[targetInterval];
@@ -164,7 +162,7 @@ export function aggregateCandles(
     startTime ?? effectiveEndTime - 30 * 24 * 60 * 60; // 30 days back
 
   // Get source candles
-  const sourceCandles = db.getCandles({
+  const sourceCandles = await db.getCandles({
     tokenId,
     interval: sourceInterval,
     startTime: effectiveStartTime,
@@ -223,24 +221,22 @@ export function aggregateCandles(
 
   // Insert aggregated candles
   let count = 0;
-  db.transaction(() => {
-    for (const [timestamp, candle] of targetCandleMap) {
-      if (candle.open === null || candle.close === null) continue;
+  for (const [timestamp, candle] of targetCandleMap) {
+    if (candle.open === null || candle.close === null) continue;
 
-      db.upsertCandle({
-        token_id: tokenId,
-        timestamp,
-        interval: targetInterval,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low === Number.MAX_SAFE_INTEGER ? null : candle.low,
-        close: candle.close,
-        volume: candle.volume,
-        trade_count: candle.trade_count,
-      });
-      count++;
-    }
-  });
+    await db.upsertCandle({
+      token_id: tokenId,
+      timestamp,
+      interval: targetInterval,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low === Number.MAX_SAFE_INTEGER ? null : candle.low,
+      close: candle.close,
+      volume: candle.volume,
+      trade_count: candle.trade_count,
+    });
+    count++;
+  }
 
   return count;
 }
@@ -256,7 +252,7 @@ export async function aggregateAllCandles(tokenId: string): Promise<void> {
     const source = intervals[i];
     const target = intervals[i + 1];
 
-    const count = aggregateCandles(tokenId, source, target);
+    const count = await aggregateCandles(tokenId, source, target);
 
     if (count > 0) {
       console.log(
@@ -267,17 +263,17 @@ export async function aggregateAllCandles(tokenId: string): Promise<void> {
 }
 
 // Get candles for a token with automatic aggregation if needed
-export function getCandlesWithFallback(
+export async function getCandlesWithFallback(
   tokenId: string,
   interval: CandleInterval,
   startTime?: number,
   endTime?: number,
   limit?: number
-): CandleRow[] {
-  const db = getPolymarketDB();
+): Promise<CandleRow[]> {
+  const db = await getPolymarketDB();
 
   // First try to get candles for the requested interval
-  let candles = db.getCandles({
+  let candles = await db.getCandles({
     tokenId,
     interval,
     startTime,
@@ -297,7 +293,7 @@ export function getCandlesWithFallback(
 
     for (let i = 0; i < targetIndex; i++) {
       const sourceInterval = intervals[i];
-      const sourceCandles = db.getCandles({
+      const sourceCandles = await db.getCandles({
         tokenId,
         interval: sourceInterval,
         startTime,
@@ -311,7 +307,7 @@ export function getCandlesWithFallback(
 
         // Aggregate all the way up to target interval
         for (let j = i; j < targetIndex; j++) {
-          aggregateCandles(
+          await aggregateCandles(
             tokenId,
             intervals[j],
             intervals[j + 1],
@@ -321,7 +317,7 @@ export function getCandlesWithFallback(
         }
 
         // Fetch aggregated candles
-        candles = db.getCandles({
+        candles = await db.getCandles({
           tokenId,
           interval,
           startTime,
@@ -338,17 +334,17 @@ export function getCandlesWithFallback(
 }
 
 // Update candles when a new trade comes in from WebSocket
-export function handleRealtimeTrade(trade: {
+export async function handleRealtimeTrade(trade: {
   tokenId: string;
   price: number;
   size: number;
   side: string;
   timestamp: number;
-}): void {
-  const db = getPolymarketDB();
+}): Promise<void> {
+  const db = await getPolymarketDB();
 
   // Store the trade
-  db.insertTrade({
+  await db.insertTrade({
     id: `ws_${trade.timestamp}_${Math.random().toString(36).slice(2)}`,
     token_id: trade.tokenId,
     price: trade.price,
@@ -358,7 +354,7 @@ export function handleRealtimeTrade(trade: {
   });
 
   // Update 1m candle
-  processTradeIntoCandle({
+  await processTradeIntoCandle({
     id: "",
     token_id: trade.tokenId,
     price: trade.price,
@@ -372,7 +368,7 @@ export function handleRealtimeTrade(trade: {
 }
 
 // Periodic aggregation job - should be run every few minutes
-export function runPeriodicAggregation(tokenIds: string[]): void {
+export async function runPeriodicAggregation(tokenIds: string[]): Promise<void> {
   console.log(
     `[CandleService] Running periodic aggregation for ${tokenIds.length} tokens`
   );
@@ -386,7 +382,7 @@ export function runPeriodicAggregation(tokenIds: string[]): void {
       const intervals = CANDLE_AGGREGATION_ORDER;
 
       for (let i = 0; i < intervals.length - 1; i++) {
-        aggregateCandles(
+        await aggregateCandles(
           tokenId,
           intervals[i],
           intervals[i + 1],

@@ -23,13 +23,12 @@ export async function initPolymarket(): Promise<void> {
 
   // 1. Initialize database
   console.log("[Polymarket] Setting up database...");
-  const db = getPolymarketDB();
-  db.bootstrapTables();
+  await getPolymarketDB();
 
   // 2. Initialize WebSocket client (connection to Polymarket)
   console.log("[Polymarket] Connecting to Polymarket WebSocket...");
   const wsClient = getPolymarketWSClient();
-  
+
   // Attach error listener to prevent unhandled 'error' events
   wsClient.on("error", (err) => {
     console.error("[Polymarket] WS Client error:", err.message);
@@ -58,7 +57,7 @@ export async function initPolymarket(): Promise<void> {
 }
 
 // Shutdown Polymarket module
-export function shutdownPolymarket(): void {
+export async function shutdownPolymarket(): Promise<void> {
   console.log("[Polymarket] Shutting down Polymarket module...");
 
   // Stop sync jobs
@@ -72,8 +71,8 @@ export function shutdownPolymarket(): void {
   shutdownWSServer();
 
   // Close database
-  const db = getPolymarketDB();
-  db.close();
+  const db = await getPolymarketDB();
+  await db.close();
 
   console.log("[Polymarket] Polymarket module shut down");
 }
@@ -83,9 +82,9 @@ export function setupGracefulShutdown(): void {
   const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 
   for (const signal of signals) {
-    process.on(signal, () => {
+    process.on(signal, async () => {
       console.log(`[Polymarket] Received ${signal}, shutting down...`);
-      shutdownPolymarket();
+      await shutdownPolymarket();
       process.exit(0);
     });
   }

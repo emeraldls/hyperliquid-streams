@@ -170,9 +170,9 @@ export class SubscriptionManager {
 
   // --- Upstream Data Handling (Multiplexing & Side Effects) ---
 
-  handlePriceUpdate(tokenId: string, price: number, timestamp: number): void {
+  async handlePriceUpdate(tokenId: string, price: number, timestamp: number): Promise<void> {
     // 1. Side effect: Store in timeseries
-    appendRealtimePrice(tokenId, Math.floor(timestamp / 1000), price);
+    await appendRealtimePrice(tokenId, Math.floor(timestamp / 1000), price);
 
     // 2. Broadcast to users
     this.broadcast(tokenId, {
@@ -183,10 +183,10 @@ export class SubscriptionManager {
     });
   }
 
-  handleOrderbookUpdate(tokenId: string, bids: Array<[number, number]>, asks: Array<[number, number]>, timestamp: number): void {
+  async handleOrderbookUpdate(tokenId: string, bids: Array<[number, number]>, asks: Array<[number, number]>, timestamp: number): Promise<void> {
     // 1. Side effect: Store in DB
-    const db = getPolymarketDB();
-    db.insertOrderbookSnapshot({
+    const db = await getPolymarketDB();
+    await db.insertOrderbookSnapshot({
       token_id: tokenId,
       timestamp,
       bids: JSON.stringify(bids),
@@ -203,16 +203,16 @@ export class SubscriptionManager {
     });
   }
 
-  handleTradeUpdate(data: {
+  async handleTradeUpdate(data: {
     id: string;
     tokenId: string;
     price: number;
     size: number;
     side: string;
     timestamp: number;
-  }): void {
+  }): Promise<void> {
     // 1. Side effect: Process into candles
-    handleRealtimeTrade({
+    await handleRealtimeTrade({
       tokenId: data.tokenId,
       price: data.price,
       size: data.size,

@@ -11,11 +11,10 @@ import { POLYMARKET_CONFIG } from "../config";
 const router = Router();
 
 // GET /api/pm/events/categories - Get all categories
-router.get("/categories", (req: Request, res: Response) => {
-  const db = getPolymarketDB();
-
+router.get("/categories", async (req: Request, res: Response) => {
   try {
-    const categories = db.getCategories();
+    const db = await getPolymarketDB();
+    const categories = await db.getCategories();
 
     res.json({
       data: categories.map((c) => ({
@@ -31,9 +30,7 @@ router.get("/categories", (req: Request, res: Response) => {
 });
 
 // GET /api/pm/events/search - Search events and markets
-router.get("/search", (req: Request, res: Response) => {
-  const db = getPolymarketDB();
-
+router.get("/search", async (req: Request, res: Response) => {
   const query = req.query.q as string | undefined;
   const category = req.query.category as string | undefined;
   const closedParam = req.query.closed as string | undefined;
@@ -57,8 +54,10 @@ router.get("/search", (req: Request, res: Response) => {
     : false;
 
   try {
+    const db = await getPolymarketDB();
+
     // Search events
-    const events = db.searchEvents({
+    const events = await db.searchEvents({
       query: query.trim(),
       closed,
       category,
@@ -67,7 +66,7 @@ router.get("/search", (req: Request, res: Response) => {
     });
 
     // Search markets
-    const markets = db.searchMarkets({
+    const markets = await db.searchMarkets({
       query: query.trim(),
       closed,
       limit,
@@ -139,9 +138,7 @@ router.get("/search", (req: Request, res: Response) => {
 });
 
 // GET /api/pm/events - List events
-router.get("/", (req: Request, res: Response) => {
-  const db = getPolymarketDB();
-
+router.get("/", async (req: Request, res: Response) => {
   // Parse query parameters
   const activeParam = req.query.active as string | undefined;
   const closedParam = req.query.closed as string | undefined;
@@ -184,7 +181,8 @@ router.get("/", (req: Request, res: Response) => {
   }
 
   try {
-    const events = db.getEvents(params);
+    const db = await getPolymarketDB();
+    const events = await db.getEvents(params);
 
     // Parse raw_data JSON for each event to get full details
     const parsedEvents = events.map((event) => {
@@ -232,16 +230,17 @@ router.get("/", (req: Request, res: Response) => {
 });
 
 // GET /api/pm/events/:id - Get single event with markets
-router.get("/:id", (req: Request, res: Response) => {
-  const db = getPolymarketDB();
+router.get("/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
 
   try {
+    const db = await getPolymarketDB();
+
     // Try by ID first, then by slug
-    let event = db.getEventById(id);
+    let event = await db.getEventById(id);
 
     if (!event) {
-      event = db.getEventBySlug(id);
+      event = await db.getEventBySlug(id);
     }
 
     if (!event) {
@@ -250,7 +249,7 @@ router.get("/:id", (req: Request, res: Response) => {
     }
 
     // Get markets for this event
-    const markets = db.getMarketsByEventId(event.id);
+    const markets = await db.getMarketsByEventId(event.id);
 
     // Parse raw_data for full details
     let fullData = null;

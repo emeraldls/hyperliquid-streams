@@ -1,14 +1,17 @@
-import { DatabaseSync } from "node:sqlite";
+import { Pool } from "pg";
 import { POLYMARKET_CONFIG, type CandleInterval } from "./config";
 
 export class PolymarketDB {
-  private db: DatabaseSync;
+  private pool: Pool;
 
   constructor() {
-    this.db = new DatabaseSync(POLYMARKET_CONFIG.database.path);
+    this.pool = new Pool({
+      connectionString: POLYMARKET_CONFIG.database.url,
+    });
+    console.log("[PolymarketDB] PostgreSQL pool created");
   }
 
-  bootstrapTables() {
+  async bootstrapTables() {
     const schema = `
       -- Events from Gamma API
       CREATE TABLE IF NOT EXISTS pm_events (
@@ -20,10 +23,10 @@ export class PolymarketDB {
         start_date TEXT,
         end_date TEXT,
         image_url TEXT,
-        active INTEGER DEFAULT 1,
-        closed INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        active BOOLEAN DEFAULT TRUE,
+        closed BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         raw_data TEXT
       );
 
@@ -39,12 +42,12 @@ export class PolymarketDB {
         outcomes TEXT,
         outcome_prices TEXT,
         token_ids TEXT,
-        active INTEGER DEFAULT 1,
-        closed INTEGER DEFAULT 0,
+        active BOOLEAN DEFAULT TRUE,
+        closed BOOLEAN DEFAULT FALSE,
         volume TEXT,
         liquidity TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         raw_data TEXT
       );
 
@@ -54,17 +57,17 @@ export class PolymarketDB {
 
       -- OHLCV candles
       CREATE TABLE IF NOT EXISTS pm_price_candles (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         token_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
+        timestamp BIGINT NOT NULL,
         interval TEXT NOT NULL,
-        open REAL,
-        high REAL,
-        low REAL,
-        close REAL,
-        volume REAL,
+        open DOUBLE PRECISION,
+        high DOUBLE PRECISION,
+        low DOUBLE PRECISION,
+        close DOUBLE PRECISION,
+        volume DOUBLE PRECISION,
         trade_count INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(token_id, timestamp, interval)
       );
 
@@ -74,23 +77,23 @@ export class PolymarketDB {
       CREATE TABLE IF NOT EXISTS pm_trades (
         id TEXT PRIMARY KEY,
         token_id TEXT NOT NULL,
-        price REAL NOT NULL,
-        size REAL NOT NULL,
+        price DOUBLE PRECISION NOT NULL,
+        size DOUBLE PRECISION NOT NULL,
         side TEXT,
-        timestamp INTEGER NOT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        timestamp BIGINT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE INDEX IF NOT EXISTS idx_pm_trades_token_time ON pm_trades(token_id, timestamp DESC);
 
       -- Orderbook snapshots (optional)
       CREATE TABLE IF NOT EXISTS pm_orderbook_snapshots (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         token_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
+        timestamp BIGINT NOT NULL,
         bids TEXT,
         asks TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE INDEX IF NOT EXISTS idx_pm_orderbook_token_time ON pm_orderbook_snapshots(token_id, timestamp DESC);
@@ -99,17 +102,17 @@ export class PolymarketDB {
       CREATE TABLE IF NOT EXISTS pm_sync_state (
         key TEXT PRIMARY KEY,
         value TEXT,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
 
       -- Raw price history points (from timeseries API)
       CREATE TABLE IF NOT EXISTS pm_price_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         token_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        price REAL NOT NULL,
+        timestamp BIGINT NOT NULL,
+        price DOUBLE PRECISION NOT NULL,
         source TEXT DEFAULT 'api',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(token_id, timestamp)
       );
 
@@ -117,45 +120,44 @@ export class PolymarketDB {
 
       -- Track fetched ranges to avoid re-fetching
       CREATE TABLE IF NOT EXISTS pm_price_history_ranges (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         token_id TEXT NOT NULL,
-        start_ts INTEGER NOT NULL,
-        end_ts INTEGER NOT NULL,
+        start_ts BIGINT NOT NULL,
+        end_ts BIGINT NOT NULL,
         interval TEXT NOT NULL,
         fidelity INTEGER,
         point_count INTEGER DEFAULT 0,
-        fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        fetched_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(token_id, start_ts, end_ts, interval)
       );
 
       CREATE INDEX IF NOT EXISTS idx_pm_price_history_ranges_token ON pm_price_history_ranges(token_id, interval);
     `;
 
-    this.db.exec(schema);
+    await this.pool.query(schema);
   }
 
   // ==================== EVENTS ====================
 
-  upsertEvent(event: EventRow) {
-    const stmt = this.db.prepare(`
+  async upsertEvent(event: EventRow) {
+    const query = `
       INSERT INTO pm_events (id, slug, title, description, category, start_date, end_date, image_url, active, closed, raw_data, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
-        slug = excluded.slug,
-        title = excluded.title,
-        description = excluded.description,
-        category = excluded.category,
-        start_date = excluded.start_date,
-        end_date = excluded.end_date,
-        image_url = excluded.image_url,
-        active = excluded.active,
-        closed = excluded.closed,
-        raw_data = excluded.raw_data,
+        slug = EXCLUDED.slug,
+        title = EXCLUDED.title,
+        description = EXCLUDED.description,
+        category = EXCLUDED.category,
+        start_date = EXCLUDED.start_date,
+        end_date = EXCLUDED.end_date,
+        image_url = EXCLUDED.image_url,
+        active = EXCLUDED.active,
+        closed = EXCLUDED.closed,
+        raw_data = EXCLUDED.raw_data,
         updated_at = CURRENT_TIMESTAMP
-    `);
+    `;
 
-    // SQLite requires null instead of undefined
-    stmt.run(
+    await this.pool.query(query, [
       event.id,
       event.slug ?? null,
       event.title,
@@ -164,13 +166,13 @@ export class PolymarketDB {
       event.start_date ?? null,
       event.end_date ?? null,
       event.image_url ?? null,
-      event.active ? 1 : 0,
-      event.closed ? 1 : 0,
-      event.raw_data ?? null
-    );
+      event.active ?? true,
+      event.closed ?? false,
+      event.raw_data ?? null,
+    ]);
   }
 
-  getEvents(params: {
+  async getEvents(params: {
     active?: boolean;
     closed?: boolean;
     category?: string;
@@ -178,67 +180,74 @@ export class PolymarketDB {
     offset?: number;
   }) {
     let query = "SELECT * FROM pm_events WHERE 1=1";
-    const queryParams: (string | number)[] = [];
+    const queryParams: (string | number | boolean)[] = [];
+    let paramIndex = 1;
 
     if (params.active !== undefined) {
-      query += " AND active = ?";
-      queryParams.push(params.active ? 1 : 0);
+      query += ` AND active = $${paramIndex++}`;
+      queryParams.push(params.active);
     }
 
     if (params.closed !== undefined) {
-      query += " AND closed = ?";
-      queryParams.push(params.closed ? 1 : 0);
+      query += ` AND closed = $${paramIndex++}`;
+      queryParams.push(params.closed);
     }
 
     if (params.category) {
-      query += " AND category = ?";
+      query += ` AND category = $${paramIndex++}`;
       queryParams.push(params.category);
     }
 
     query += " ORDER BY updated_at DESC";
 
     if (params.limit) {
-      query += " LIMIT ?";
+      query += ` LIMIT $${paramIndex++}`;
       queryParams.push(params.limit);
     }
 
     if (params.offset) {
-      query += " OFFSET ?";
+      query += ` OFFSET $${paramIndex++}`;
       queryParams.push(params.offset);
     }
 
-    const stmt = this.db.prepare(query);
-    return stmt.all(...queryParams) as EventRow[];
+    const result = await this.pool.query(query, queryParams);
+    return result.rows as EventRow[];
   }
 
-  getEventById(id: string) {
-    const stmt = this.db.prepare("SELECT * FROM pm_events WHERE id = ?");
-    return stmt.get(id) as EventRow | undefined;
+  async getEventById(id: string) {
+    const result = await this.pool.query(
+      "SELECT * FROM pm_events WHERE id = $1",
+      [id]
+    );
+    return result.rows[0] as EventRow | undefined;
   }
 
-  getEventBySlug(slug: string) {
-    const stmt = this.db.prepare("SELECT * FROM pm_events WHERE slug = ?");
-    return stmt.get(slug) as EventRow | undefined;
+  async getEventBySlug(slug: string) {
+    const result = await this.pool.query(
+      "SELECT * FROM pm_events WHERE slug = $1",
+      [slug]
+    );
+    return result.rows[0] as EventRow | undefined;
   }
 
   // Get all unique categories with event counts
-  getCategories(excludeClosed: boolean = true) {
+  async getCategories(excludeClosed: boolean = true) {
     let query = `
       SELECT category, COUNT(*) as count
       FROM pm_events
       WHERE category IS NOT NULL AND category != ''
     `;
     if (excludeClosed) {
-      query += " AND closed = 0";
+      query += " AND closed = FALSE";
     }
     query += " GROUP BY category ORDER BY count DESC";
 
-    const stmt = this.db.prepare(query);
-    return stmt.all() as { category: string; count: number }[];
+    const result = await this.pool.query(query);
+    return result.rows as { category: string; count: number }[];
   }
 
   // Search events by title or description
-  searchEvents(params: {
+  async searchEvents(params: {
     query: string;
     closed?: boolean;
     category?: string;
@@ -248,38 +257,39 @@ export class PolymarketDB {
     const searchTerm = `%${params.query}%`;
     let sql = `
       SELECT * FROM pm_events
-      WHERE (title LIKE ? OR description LIKE ?)
+      WHERE (title ILIKE $1 OR description ILIKE $2)
     `;
-    const queryParams: (string | number)[] = [searchTerm, searchTerm];
+    const queryParams: (string | number | boolean)[] = [searchTerm, searchTerm];
+    let paramIndex = 3;
 
     if (params.closed !== undefined) {
-      sql += " AND closed = ?";
-      queryParams.push(params.closed ? 1 : 0);
+      sql += ` AND closed = $${paramIndex++}`;
+      queryParams.push(params.closed);
     }
 
     if (params.category) {
-      sql += " AND category = ?";
+      sql += ` AND category = $${paramIndex++}`;
       queryParams.push(params.category);
     }
 
     sql += " ORDER BY updated_at DESC";
 
     if (params.limit) {
-      sql += " LIMIT ?";
+      sql += ` LIMIT $${paramIndex++}`;
       queryParams.push(params.limit);
     }
 
     if (params.offset) {
-      sql += " OFFSET ?";
+      sql += ` OFFSET $${paramIndex++}`;
       queryParams.push(params.offset);
     }
 
-    const stmt = this.db.prepare(sql);
-    return stmt.all(...queryParams) as EventRow[];
+    const result = await this.pool.query(sql, queryParams);
+    return result.rows as EventRow[];
   }
 
   // Search markets by question
-  searchMarkets(params: {
+  async searchMarkets(params: {
     query: string;
     closed?: boolean;
     eventId?: string;
@@ -287,58 +297,58 @@ export class PolymarketDB {
     offset?: number;
   }) {
     const searchTerm = `%${params.query}%`;
-    let sql = "SELECT * FROM pm_markets WHERE question LIKE ?";
-    const queryParams: (string | number)[] = [searchTerm];
+    let sql = "SELECT * FROM pm_markets WHERE question ILIKE $1";
+    const queryParams: (string | number | boolean)[] = [searchTerm];
+    let paramIndex = 2;
 
     if (params.closed !== undefined) {
-      sql += " AND closed = ?";
-      queryParams.push(params.closed ? 1 : 0);
+      sql += ` AND closed = $${paramIndex++}`;
+      queryParams.push(params.closed);
     }
 
     if (params.eventId) {
-      sql += " AND event_id = ?";
+      sql += ` AND event_id = $${paramIndex++}`;
       queryParams.push(params.eventId);
     }
 
     sql += " ORDER BY updated_at DESC";
 
     if (params.limit) {
-      sql += " LIMIT ?";
+      sql += ` LIMIT $${paramIndex++}`;
       queryParams.push(params.limit);
     }
 
     if (params.offset) {
-      sql += " OFFSET ?";
+      sql += ` OFFSET $${paramIndex++}`;
       queryParams.push(params.offset);
     }
 
-    const stmt = this.db.prepare(sql);
-    return stmt.all(...queryParams) as MarketRow[];
+    const result = await this.pool.query(sql, queryParams);
+    return result.rows as MarketRow[];
   }
 
   // ==================== MARKETS ====================
 
-  upsertMarket(market: MarketRow) {
-    const stmt = this.db.prepare(`
+  async upsertMarket(market: MarketRow) {
+    const query = `
       INSERT INTO pm_markets (id, event_id, question, slug, outcomes, outcome_prices, token_ids, active, closed, volume, liquidity, raw_data, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
       ON CONFLICT(id) DO UPDATE SET
-        event_id = excluded.event_id,
-        question = excluded.question,
-        slug = excluded.slug,
-        outcomes = excluded.outcomes,
-        outcome_prices = excluded.outcome_prices,
-        token_ids = excluded.token_ids,
-        active = excluded.active,
-        closed = excluded.closed,
-        volume = excluded.volume,
-        liquidity = excluded.liquidity,
-        raw_data = excluded.raw_data,
+        event_id = EXCLUDED.event_id,
+        question = EXCLUDED.question,
+        slug = EXCLUDED.slug,
+        outcomes = EXCLUDED.outcomes,
+        outcome_prices = EXCLUDED.outcome_prices,
+        token_ids = EXCLUDED.token_ids,
+        active = EXCLUDED.active,
+        closed = EXCLUDED.closed,
+        volume = EXCLUDED.volume,
+        liquidity = EXCLUDED.liquidity,
+        raw_data = EXCLUDED.raw_data,
         updated_at = CURRENT_TIMESTAMP
-    `);
+    `;
 
-    // SQLite requires null instead of undefined
-    stmt.run(
+    await this.pool.query(query, [
       market.id,
       market.event_id ?? null,
       market.question,
@@ -346,15 +356,15 @@ export class PolymarketDB {
       market.outcomes ?? null,
       market.outcome_prices ?? null,
       market.token_ids ?? null,
-      market.active ? 1 : 0,
-      market.closed ? 1 : 0,
+      market.active ?? true,
+      market.closed ?? false,
       market.volume ?? null,
       market.liquidity ?? null,
-      market.raw_data ?? null
-    );
+      market.raw_data ?? null,
+    ]);
   }
 
-  getMarkets(params: {
+  async getMarkets(params: {
     eventId?: string;
     active?: boolean;
     closed?: boolean;
@@ -362,79 +372,86 @@ export class PolymarketDB {
     offset?: number;
   }) {
     let query = "SELECT * FROM pm_markets WHERE 1=1";
-    const queryParams: (string | number)[] = [];
+    const queryParams: (string | number | boolean)[] = [];
+    let paramIndex = 1;
 
     if (params.eventId) {
-      query += " AND event_id = ?";
+      query += ` AND event_id = $${paramIndex++}`;
       queryParams.push(params.eventId);
     }
 
     if (params.active !== undefined) {
-      query += " AND active = ?";
-      queryParams.push(params.active ? 1 : 0);
+      query += ` AND active = $${paramIndex++}`;
+      queryParams.push(params.active);
     }
 
     if (params.closed !== undefined) {
-      query += " AND closed = ?";
-      queryParams.push(params.closed ? 1 : 0);
+      query += ` AND closed = $${paramIndex++}`;
+      queryParams.push(params.closed);
     }
 
     query += " ORDER BY updated_at DESC";
 
     if (params.limit) {
-      query += " LIMIT ?";
+      query += ` LIMIT $${paramIndex++}`;
       queryParams.push(params.limit);
     }
 
     if (params.offset) {
-      query += " OFFSET ?";
+      query += ` OFFSET $${paramIndex++}`;
       queryParams.push(params.offset);
     }
 
-    const stmt = this.db.prepare(query);
-    return stmt.all(...queryParams) as MarketRow[];
+    const result = await this.pool.query(query, queryParams);
+    return result.rows as MarketRow[];
   }
 
-  getMarketById(id: string) {
-    const stmt = this.db.prepare("SELECT * FROM pm_markets WHERE id = ?");
-    return stmt.get(id) as MarketRow | undefined;
+  async getMarketById(id: string) {
+    const result = await this.pool.query(
+      "SELECT * FROM pm_markets WHERE id = $1",
+      [id]
+    );
+    return result.rows[0] as MarketRow | undefined;
   }
 
-  getMarketBySlug(slug: string) {
-    const stmt = this.db.prepare("SELECT * FROM pm_markets WHERE slug = ?");
-    return stmt.get(slug) as MarketRow | undefined;
+  async getMarketBySlug(slug: string) {
+    const result = await this.pool.query(
+      "SELECT * FROM pm_markets WHERE slug = $1",
+      [slug]
+    );
+    return result.rows[0] as MarketRow | undefined;
   }
 
-  getMarketsByEventId(eventId: string, excludeClosed: boolean = true) {
-    let query = "SELECT * FROM pm_markets WHERE event_id = ?";
+  async getMarketsByEventId(eventId: string, excludeClosed: boolean = true) {
+    let query = "SELECT * FROM pm_markets WHERE event_id = $1";
     if (excludeClosed) {
-      query += " AND closed = 0";
+      query += " AND closed = FALSE";
     }
     query += " ORDER BY updated_at DESC";
-    const stmt = this.db.prepare(query);
-    return stmt.all(eventId) as MarketRow[];
+    const result = await this.pool.query(query, [eventId]);
+    return result.rows as MarketRow[];
   }
 
   // ==================== CANDLES ====================
 
-  upsertCandle(candle: CandleRow) {
-    const stmt = this.db.prepare(`
+  async upsertCandle(candle: CandleRow) {
+    const query = `
       INSERT INTO pm_price_candles (token_id, timestamp, interval, open, high, low, close, volume, trade_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT(token_id, timestamp, interval) DO UPDATE SET
-        open = COALESCE(pm_price_candles.open, excluded.open),
-        high = MAX(COALESCE(pm_price_candles.high, 0), excluded.high),
+        open = COALESCE(pm_price_candles.open, EXCLUDED.open),
+        high = GREATEST(COALESCE(pm_price_candles.high, 0), EXCLUDED.high),
         low = CASE
-          WHEN pm_price_candles.low IS NULL THEN excluded.low
-          WHEN excluded.low IS NULL THEN pm_price_candles.low
-          ELSE MIN(pm_price_candles.low, excluded.low)
+          WHEN pm_price_candles.low IS NULL THEN EXCLUDED.low
+          WHEN EXCLUDED.low IS NULL THEN pm_price_candles.low
+          ELSE LEAST(pm_price_candles.low, EXCLUDED.low)
         END,
-        close = excluded.close,
-        volume = COALESCE(pm_price_candles.volume, 0) + COALESCE(excluded.volume, 0),
-        trade_count = COALESCE(pm_price_candles.trade_count, 0) + COALESCE(excluded.trade_count, 0)
-    `);
+        close = EXCLUDED.close,
+        volume = COALESCE(pm_price_candles.volume, 0) + COALESCE(EXCLUDED.volume, 0),
+        trade_count = COALESCE(pm_price_candles.trade_count, 0) + COALESCE(EXCLUDED.trade_count, 0)
+    `;
 
-    stmt.run(
+    await this.pool.query(query, [
       candle.token_id,
       candle.timestamp,
       candle.interval,
@@ -443,11 +460,11 @@ export class PolymarketDB {
       candle.low,
       candle.close,
       candle.volume,
-      candle.trade_count
-    );
+      candle.trade_count,
+    ]);
   }
 
-  getCandles(params: {
+  async getCandles(params: {
     tokenId: string;
     interval: CandleInterval;
     startTime?: number;
@@ -455,236 +472,271 @@ export class PolymarketDB {
     limit?: number;
   }) {
     let query =
-      "SELECT * FROM pm_price_candles WHERE token_id = ? AND interval = ?";
+      "SELECT * FROM pm_price_candles WHERE token_id = $1 AND interval = $2";
     const queryParams: (string | number)[] = [params.tokenId, params.interval];
+    let paramIndex = 3;
 
     if (params.startTime !== undefined) {
-      query += " AND timestamp >= ?";
+      query += ` AND timestamp >= $${paramIndex++}`;
       queryParams.push(params.startTime);
     }
 
     if (params.endTime !== undefined) {
-      query += " AND timestamp <= ?";
+      query += ` AND timestamp <= $${paramIndex++}`;
       queryParams.push(params.endTime);
     }
 
     query += " ORDER BY timestamp ASC";
 
     if (params.limit) {
-      query += " LIMIT ?";
+      query += ` LIMIT $${paramIndex++}`;
       queryParams.push(params.limit);
     }
 
-    const stmt = this.db.prepare(query);
-    return stmt.all(...queryParams) as CandleRow[];
+    const result = await this.pool.query(query, queryParams);
+    return result.rows as CandleRow[];
   }
 
-  getLatestCandle(tokenId: string, interval: CandleInterval) {
-    const stmt = this.db.prepare(`
+  async getLatestCandle(tokenId: string, interval: CandleInterval) {
+    const result = await this.pool.query(
+      `
       SELECT * FROM pm_price_candles
-      WHERE token_id = ? AND interval = ?
+      WHERE token_id = $1 AND interval = $2
       ORDER BY timestamp DESC LIMIT 1
-    `);
-    return stmt.get(tokenId, interval) as CandleRow | undefined;
+    `,
+      [tokenId, interval]
+    );
+    return result.rows[0] as CandleRow | undefined;
   }
 
   // Get candles for aggregation (used to build larger timeframes)
-  getCandlesForAggregation(
+  async getCandlesForAggregation(
     tokenId: string,
     sourceInterval: CandleInterval,
     startTime: number,
     endTime: number
   ) {
-    const stmt = this.db.prepare(`
+    const result = await this.pool.query(
+      `
       SELECT * FROM pm_price_candles
-      WHERE token_id = ? AND interval = ? AND timestamp >= ? AND timestamp < ?
+      WHERE token_id = $1 AND interval = $2 AND timestamp >= $3 AND timestamp < $4
       ORDER BY timestamp ASC
-    `);
-    return stmt.all(tokenId, sourceInterval, startTime, endTime) as CandleRow[];
+    `,
+      [tokenId, sourceInterval, startTime, endTime]
+    );
+    return result.rows as CandleRow[];
   }
 
   // ==================== TRADES ====================
 
-  insertTrade(trade: TradeRow) {
-    const stmt = this.db.prepare(`
-      INSERT OR IGNORE INTO pm_trades (id, token_id, price, size, side, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
+  async insertTrade(trade: TradeRow) {
+    const query = `
+      INSERT INTO pm_trades (id, token_id, price, size, side, timestamp)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT(id) DO NOTHING
+    `;
 
-    stmt.run(
+    await this.pool.query(query, [
       trade.id,
       trade.token_id,
       trade.price,
       trade.size,
       trade.side,
-      trade.timestamp
-    );
+      trade.timestamp,
+    ]);
   }
 
-  getTrades(params: {
-    tokenId: string;
-    limit?: number;
-    before?: number;
-  }) {
-    let query = "SELECT * FROM pm_trades WHERE token_id = ?";
+  async getTrades(params: { tokenId: string; limit?: number; before?: number }) {
+    let query = "SELECT * FROM pm_trades WHERE token_id = $1";
     const queryParams: (string | number)[] = [params.tokenId];
+    let paramIndex = 2;
 
     if (params.before !== undefined) {
-      query += " AND timestamp < ?";
+      query += ` AND timestamp < $${paramIndex++}`;
       queryParams.push(params.before);
     }
 
     query += " ORDER BY timestamp DESC";
 
     if (params.limit) {
-      query += " LIMIT ?";
+      query += ` LIMIT $${paramIndex++}`;
       queryParams.push(params.limit);
     }
 
-    const stmt = this.db.prepare(query);
-    return stmt.all(...queryParams) as TradeRow[];
+    const result = await this.pool.query(query, queryParams);
+    return result.rows as TradeRow[];
   }
 
-  getTradesInRange(tokenId: string, startTime: number, endTime: number) {
-    const stmt = this.db.prepare(`
+  async getTradesInRange(tokenId: string, startTime: number, endTime: number) {
+    const result = await this.pool.query(
+      `
       SELECT * FROM pm_trades
-      WHERE token_id = ? AND timestamp >= ? AND timestamp < ?
+      WHERE token_id = $1 AND timestamp >= $2 AND timestamp < $3
       ORDER BY timestamp ASC
-    `);
-    return stmt.all(tokenId, startTime, endTime) as TradeRow[];
+    `,
+      [tokenId, startTime, endTime]
+    );
+    return result.rows as TradeRow[];
   }
 
   // ==================== ORDERBOOK SNAPSHOTS ====================
 
-  insertOrderbookSnapshot(snapshot: OrderbookSnapshotRow) {
-    const stmt = this.db.prepare(`
+  async insertOrderbookSnapshot(snapshot: OrderbookSnapshotRow) {
+    const query = `
       INSERT INTO pm_orderbook_snapshots (token_id, timestamp, bids, asks)
-      VALUES (?, ?, ?, ?)
-    `);
+      VALUES ($1, $2, $3, $4)
+    `;
 
-    stmt.run(
+    await this.pool.query(query, [
       snapshot.token_id,
       snapshot.timestamp,
       snapshot.bids,
-      snapshot.asks
-    );
+      snapshot.asks,
+    ]);
   }
 
-  getLatestOrderbookSnapshot(tokenId: string) {
-    const stmt = this.db.prepare(`
+  async getLatestOrderbookSnapshot(tokenId: string) {
+    const result = await this.pool.query(
+      `
       SELECT * FROM pm_orderbook_snapshots
-      WHERE token_id = ?
+      WHERE token_id = $1
       ORDER BY timestamp DESC LIMIT 1
-    `);
-    return stmt.get(tokenId) as OrderbookSnapshotRow | undefined;
+    `,
+      [tokenId]
+    );
+    return result.rows[0] as OrderbookSnapshotRow | undefined;
   }
 
   // ==================== SYNC STATE ====================
 
-  getSyncState(key: string): string | null {
-    const stmt = this.db.prepare(
-      "SELECT value FROM pm_sync_state WHERE key = ?"
+  async getSyncState(key: string): Promise<string | null> {
+    const result = await this.pool.query(
+      "SELECT value FROM pm_sync_state WHERE key = $1",
+      [key]
     );
-    const row = stmt.get(key) as { value: string } | undefined;
-    return row?.value ?? null;
+    return result.rows[0]?.value ?? null;
   }
 
-  setSyncState(key: string, value: string) {
-    const stmt = this.db.prepare(`
+  async setSyncState(key: string, value: string) {
+    const query = `
       INSERT INTO pm_sync_state (key, value, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
+      VALUES ($1, $2, CURRENT_TIMESTAMP)
       ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
+        value = EXCLUDED.value,
         updated_at = CURRENT_TIMESTAMP
-    `);
-    stmt.run(key, value);
+    `;
+    await this.pool.query(query, [key, value]);
   }
 
   // ==================== PRICE HISTORY ====================
 
   // Batch insert price history points
-  insertPriceHistoryPoints(points: PriceHistoryPointRow[]) {
+  async insertPriceHistoryPoints(points: PriceHistoryPointRow[]) {
     if (points.length === 0) return;
 
-    const stmt = this.db.prepare(`
-      INSERT OR IGNORE INTO pm_price_history (token_id, timestamp, price, source)
-      VALUES (?, ?, ?, ?)
-    `);
+    const query = `
+      INSERT INTO pm_price_history (token_id, timestamp, price, source)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT(token_id, timestamp) DO NOTHING
+    `;
 
     for (const point of points) {
-      stmt.run(point.token_id, point.timestamp, point.price, point.source || "api");
+      await this.pool.query(query, [
+        point.token_id,
+        point.timestamp,
+        point.price,
+        point.source || "api",
+      ]);
     }
   }
 
   // Append a single real-time price update
-  appendPriceHistoryPoint(tokenId: string, timestamp: number, price: number, source: string = "ws") {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO pm_price_history (token_id, timestamp, price, source)
-      VALUES (?, ?, ?, ?)
-    `);
-    stmt.run(tokenId, timestamp, price, source);
+  async appendPriceHistoryPoint(
+    tokenId: string,
+    timestamp: number,
+    price: number,
+    source: string = "ws"
+  ) {
+    const query = `
+      INSERT INTO pm_price_history (token_id, timestamp, price, source)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT(token_id, timestamp) DO UPDATE SET
+        price = EXCLUDED.price,
+        source = EXCLUDED.source
+    `;
+    await this.pool.query(query, [tokenId, timestamp, price, source]);
   }
 
   // Get price history for a range
-  getPriceHistory(params: {
+  async getPriceHistory(params: {
     tokenId: string;
     startTs: number;
     endTs: number;
     limit?: number;
-  }): PriceHistoryPointRow[] {
+  }): Promise<PriceHistoryPointRow[]> {
     let query = `
       SELECT * FROM pm_price_history
-      WHERE token_id = ? AND timestamp >= ? AND timestamp <= ?
+      WHERE token_id = $1 AND timestamp >= $2 AND timestamp <= $3
       ORDER BY timestamp ASC
     `;
-    const queryParams: (string | number)[] = [params.tokenId, params.startTs, params.endTs];
+    const queryParams: (string | number)[] = [
+      params.tokenId,
+      params.startTs,
+      params.endTs,
+    ];
 
     if (params.limit) {
-      query += " LIMIT ?";
+      query += " LIMIT $4";
       queryParams.push(params.limit);
     }
 
-    const stmt = this.db.prepare(query);
-    return stmt.all(...queryParams) as PriceHistoryPointRow[];
+    const result = await this.pool.query(query, queryParams);
+    return result.rows as PriceHistoryPointRow[];
   }
 
   // Get cached ranges for a token
-  getCachedRanges(tokenId: string, interval: string): PriceHistoryRangeRow[] {
-    const stmt = this.db.prepare(`
+  async getCachedRanges(
+    tokenId: string,
+    interval: string
+  ): Promise<PriceHistoryRangeRow[]> {
+    const result = await this.pool.query(
+      `
       SELECT * FROM pm_price_history_ranges
-      WHERE token_id = ? AND interval = ?
+      WHERE token_id = $1 AND interval = $2
       ORDER BY start_ts ASC
-    `);
-    return stmt.all(tokenId, interval) as PriceHistoryRangeRow[];
+    `,
+      [tokenId, interval]
+    );
+    return result.rows as PriceHistoryRangeRow[];
   }
 
   // Record a fetched range
-  recordFetchedRange(range: Omit<PriceHistoryRangeRow, "id" | "fetched_at">) {
-    const stmt = this.db.prepare(`
+  async recordFetchedRange(range: Omit<PriceHistoryRangeRow, "id" | "fetched_at">) {
+    const query = `
       INSERT INTO pm_price_history_ranges (token_id, start_ts, end_ts, interval, fidelity, point_count)
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT(token_id, start_ts, end_ts, interval) DO UPDATE SET
-        point_count = excluded.point_count,
+        point_count = EXCLUDED.point_count,
         fetched_at = CURRENT_TIMESTAMP
-    `);
-    stmt.run(
+    `;
+    await this.pool.query(query, [
       range.token_id,
       range.start_ts,
       range.end_ts,
       range.interval,
       range.fidelity ?? null,
-      range.point_count ?? 0
-    );
+      range.point_count ?? 0,
+    ]);
   }
 
   // Find gaps in cached data for a requested range
-  findUncachedRanges(
+  async findUncachedRanges(
     tokenId: string,
     startTs: number,
     endTs: number,
     interval: string
-  ): { startTs: number; endTs: number }[] {
-    const cachedRanges = this.getCachedRanges(tokenId, interval);
+  ): Promise<{ startTs: number; endTs: number }[]> {
+    const cachedRanges = await this.getCachedRanges(tokenId, interval);
 
     if (cachedRanges.length === 0) {
       // No cached data at all - entire range is uncached
@@ -728,30 +780,33 @@ export class PolymarketDB {
   }
 
   // Get count of price history points for a token
-  getPriceHistoryCount(tokenId: string): number {
-    const stmt = this.db.prepare(
-      "SELECT COUNT(*) as count FROM pm_price_history WHERE token_id = ?"
+  async getPriceHistoryCount(tokenId: string): Promise<number> {
+    const result = await this.pool.query(
+      "SELECT COUNT(*) as count FROM pm_price_history WHERE token_id = $1",
+      [tokenId]
     );
-    const result = stmt.get(tokenId) as { count: number };
-    return result.count;
+    return parseInt(result.rows[0].count, 10);
   }
 
   // ==================== UTILITIES ====================
 
-  close() {
-    this.db.close();
+  async close() {
+    await this.pool.end();
   }
 
   // Transaction wrapper
-  transaction<T>(fn: () => T): T {
-    this.db.exec("BEGIN TRANSACTION");
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
     try {
-      const result = fn();
-      this.db.exec("COMMIT");
+      await client.query("BEGIN");
+      const result = await fn();
+      await client.query("COMMIT");
       return result;
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      await client.query("ROLLBACK");
       throw err;
+    } finally {
+      client.release();
     }
   }
 }
@@ -766,8 +821,8 @@ export type EventRow = {
   start_date: string | null;
   end_date: string | null;
   image_url: string | null;
-  active: number;
-  closed: number;
+  active: boolean;
+  closed: boolean;
   created_at: string;
   updated_at: string;
   raw_data: string | null;
@@ -781,8 +836,8 @@ export type MarketRow = {
   outcomes: string | null; // JSON array
   outcome_prices: string | null; // JSON array
   token_ids: string | null; // JSON array
-  active: number;
-  closed: number;
+  active: boolean;
+  closed: boolean;
   volume: string | null;
   liquidity: string | null;
   created_at: string;
@@ -846,10 +901,10 @@ export type PriceHistoryRangeRow = {
 // Singleton instance
 let dbInstance: PolymarketDB | null = null;
 
-export function getPolymarketDB(): PolymarketDB {
+export async function getPolymarketDB(): Promise<PolymarketDB> {
   if (!dbInstance) {
     dbInstance = new PolymarketDB();
-    dbInstance.bootstrapTables();
+    await dbInstance.bootstrapTables();
   }
   return dbInstance;
 }

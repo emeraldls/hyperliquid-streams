@@ -10,20 +10,22 @@ import { getSyncStatus } from "../services/sync";
 const router = Router();
 
 // GET /api/pm/health - Get Polymarket subsystem status
-router.get("/", (_req: Request, res: Response) => {
+router.get("/", async (_req: Request, res: Response) => {
   try {
-    const db = getPolymarketDB();
+    const db = await getPolymarketDB();
     const pmWsClient = getPolymarketWSClient();
     const wsServerStatus = getWSServerStatus();
-    const syncStatus = getSyncStatus();
+    const syncStatus = await getSyncStatus();
 
     // Get database stats
-    const events = db.getEvents({ limit: 1 });
-    const markets = db.getMarkets({ limit: 1 });
+    const events = await db.getEvents({ limit: 1 });
+    const markets = await db.getMarkets({ limit: 1 });
 
     // Count total events and markets
-    const eventCount = db.getEvents({}).length;
-    const marketCount = db.getMarkets({}).length;
+    const allEvents = await db.getEvents({});
+    const allMarkets = await db.getMarkets({});
+    const eventCount = allEvents.length;
+    const marketCount = allMarkets.length;
 
     res.json({
       status: "ok",

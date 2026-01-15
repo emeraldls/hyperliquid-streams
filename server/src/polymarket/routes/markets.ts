@@ -17,9 +17,7 @@ import { getTimeseries, isValidPolymarketInterval } from "../services/timeseries
 const router = Router();
 
 // GET /api/pm/markets - List markets
-router.get("/", (req: Request, res: Response) => {
-  const db = getPolymarketDB();
-
+router.get("/", async (req: Request, res: Response) => {
   // Parse query parameters
   const activeParam = req.query.active as string | undefined;
   const closedParam = req.query.closed as string | undefined;
@@ -62,7 +60,8 @@ router.get("/", (req: Request, res: Response) => {
   }
 
   try {
-    const markets = db.getMarkets(params);
+    const db = await getPolymarketDB();
+    const markets = await db.getMarkets(params);
 
     // Parse market data
     const parsedMarkets = markets.map((market) => {
@@ -125,16 +124,17 @@ router.get("/", (req: Request, res: Response) => {
 });
 
 // GET /api/pm/markets/:id - Get single market
-router.get("/:id", (req: Request, res: Response) => {
-  const db = getPolymarketDB();
+router.get("/:id", async (req: Request, res: Response) => {
   const { id } = req.params;
 
   try {
+    const db = await getPolymarketDB();
+
     // Try by ID first, then by slug
-    let market = db.getMarketById(id);
+    let market = await db.getMarketById(id);
 
     if (!market) {
-      market = db.getMarketBySlug(id);
+      market = await db.getMarketBySlug(id);
     }
 
     if (!market) {
@@ -194,8 +194,7 @@ router.get("/:id", (req: Request, res: Response) => {
 });
 
 // GET /api/pm/markets/:id/candles - Get OHLCV candles
-router.get("/:id/candles", (req: Request, res: Response) => {
-  const db = getPolymarketDB();
+router.get("/:id/candles", async (req: Request, res: Response) => {
   const { id } = req.params;
 
   // Parse query parameters
@@ -218,10 +217,12 @@ router.get("/:id/candles", (req: Request, res: Response) => {
   const limit = limitParam ? parseInt(limitParam, 10) : 500;
 
   try {
+    const db = await getPolymarketDB();
+
     // First, get the market to find token IDs
-    let market = db.getMarketById(id);
+    let market = await db.getMarketById(id);
     if (!market) {
-      market = db.getMarketBySlug(id);
+      market = await db.getMarketBySlug(id);
     }
 
     if (!market) {
@@ -247,7 +248,7 @@ router.get("/:id/candles", (req: Request, res: Response) => {
     const tokenId = tokenIds[0];
 
     // Get candles
-    const candles = getCandlesWithFallback(
+    const candles = await getCandlesWithFallback(
       tokenId,
       interval,
       startTime,
@@ -280,7 +281,6 @@ router.get("/:id/candles", (req: Request, res: Response) => {
 
 // GET /api/pm/markets/:id/timeseries - Get price timeseries (for line charts)
 router.get("/:id/timeseries", async (req: Request, res: Response) => {
-  const db = getPolymarketDB();
   const { id } = req.params;
 
   // Parse query parameters
@@ -302,10 +302,12 @@ router.get("/:id/timeseries", async (req: Request, res: Response) => {
   const fidelity = fidelityParam ? parseInt(fidelityParam, 10) : undefined;
 
   try {
+    const db = await getPolymarketDB();
+
     // First, get the market to find token IDs
-    let market = db.getMarketById(id);
+    let market = await db.getMarketById(id);
     if (!market) {
-      market = db.getMarketBySlug(id);
+      market = await db.getMarketBySlug(id);
     }
 
     if (!market) {
@@ -374,8 +376,7 @@ router.get("/:id/timeseries", async (req: Request, res: Response) => {
 });
 
 // GET /api/pm/markets/:id/trades - Get recent trades
-router.get("/:id/trades", (req: Request, res: Response) => {
-  const db = getPolymarketDB();
+router.get("/:id/trades", async (req: Request, res: Response) => {
   const { id } = req.params;
 
   // Parse query parameters
@@ -386,10 +387,12 @@ router.get("/:id/trades", (req: Request, res: Response) => {
   const before = beforeParam ? parseInt(beforeParam, 10) : undefined;
 
   try {
+    const db = await getPolymarketDB();
+
     // First, get the market to find token IDs
-    let market = db.getMarketById(id);
+    let market = await db.getMarketById(id);
     if (!market) {
-      market = db.getMarketBySlug(id);
+      market = await db.getMarketBySlug(id);
     }
 
     if (!market) {
@@ -415,7 +418,7 @@ router.get("/:id/trades", (req: Request, res: Response) => {
     const tokenId = tokenIds[0];
 
     // Get trades from database
-    const trades = db.getTrades({
+    const trades = await db.getTrades({
       tokenId,
       limit,
       before,
@@ -443,14 +446,15 @@ router.get("/:id/trades", (req: Request, res: Response) => {
 
 // GET /api/pm/markets/:id/orderbook - Get current orderbook
 router.get("/:id/orderbook", async (req: Request, res: Response) => {
-  const db = getPolymarketDB();
   const { id } = req.params;
 
   try {
+    const db = await getPolymarketDB();
+
     // First, get the market to find token IDs
-    let market = db.getMarketById(id);
+    let market = await db.getMarketById(id);
     if (!market) {
-      market = db.getMarketBySlug(id);
+      market = await db.getMarketBySlug(id);
     }
 
     if (!market) {
@@ -539,7 +543,7 @@ router.get("/:id/orderbook", async (req: Request, res: Response) => {
     }
 
     // Try to get from database
-    const snapshot = db.getLatestOrderbookSnapshot(tokenId);
+    const snapshot = await db.getLatestOrderbookSnapshot(tokenId);
 
     if (snapshot) {
       try {

@@ -50,7 +50,7 @@ const DEFAULT_FIDELITY = 60; // 60 minutes
 export async function getTimeseries(
   params: TimeseriesParams
 ): Promise<TimeseriesResult> {
-  const db = getPolymarketDB();
+  const db = await getPolymarketDB();
 
   const {
     tokenId,
@@ -66,7 +66,7 @@ export async function getTimeseries(
   console.log(`[Timeseries] Getting data for ${tokenId}, range: ${startTs} - ${endTs}, interval: ${interval}`);
 
   // Find gaps in cached data
-  const uncachedRanges = db.findUncachedRanges(tokenId, startTs, endTs, interval);
+  const uncachedRanges = await db.findUncachedRanges(tokenId, startTs, endTs, interval);
 
   let fetchedRanges = 0;
 
@@ -92,10 +92,10 @@ export async function getTimeseries(
         }));
 
         // Store points
-        db.insertPriceHistoryPoints(dbPoints);
+        await db.insertPriceHistoryPoints(dbPoints);
 
         // Record the fetched range
-        db.recordFetchedRange({
+        await db.recordFetchedRange({
           token_id: tokenId,
           start_ts: range.startTs,
           end_ts: range.endTs,
@@ -108,7 +108,7 @@ export async function getTimeseries(
         fetchedRanges++;
       } else {
         // Even if no points, record the range to avoid re-fetching
-        db.recordFetchedRange({
+        await db.recordFetchedRange({
           token_id: tokenId,
           start_ts: range.startTs,
           end_ts: range.endTs,
@@ -124,7 +124,7 @@ export async function getTimeseries(
   }
 
   // Now retrieve all data from DB
-  const dbPoints = db.getPriceHistory({
+  const dbPoints = await db.getPriceHistory({
     tokenId,
     startTs,
     endTs,
@@ -146,33 +146,34 @@ export async function getTimeseries(
 /**
  * Append a real-time price update from WebSocket
  */
-export function appendRealtimePrice(
+export async function appendRealtimePrice(
   tokenId: string,
   timestamp: number,
   price: number
-): void {
-  const db = getPolymarketDB();
-  db.appendPriceHistoryPoint(tokenId, timestamp, price, "ws");
+): Promise<void> {
+  const db = await getPolymarketDB();
+  await db.appendPriceHistoryPoint(tokenId, timestamp, price, "ws");
 }
 
 /**
  * Get cache coverage info for a token
  */
-export function getCacheCoverage(
+export async function getCacheCoverage(
   tokenId: string,
   interval: string = DEFAULT_INTERVAL
-): {
+): Promise<{
   ranges: { startTs: number; endTs: number }[];
   totalPoints: number;
-} {
-  const db = getPolymarketDB();
+}> {
+  const db = await getPolymarketDB();
 
-  const ranges = db.getCachedRanges(tokenId, interval).map((r) => ({
+  const cachedRanges = await db.getCachedRanges(tokenId, interval);
+  const ranges = cachedRanges.map((r) => ({
     startTs: r.start_ts,
     endTs: r.end_ts,
   }));
 
-  const totalPoints = db.getPriceHistoryCount(tokenId);
+  const totalPoints = await db.getPriceHistoryCount(tokenId);
 
   return { ranges, totalPoints };
 }

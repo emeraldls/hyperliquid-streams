@@ -20,11 +20,14 @@
   },
   "dependencies": {
     "@polymarket/clob-client": "^5.2.1",
+    "@types/pg": "^8.16.0",
     "@types/ws": "^8.18.1",
     "cbor2": "^2.0.1",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
     "ethers": "5.8.0",
     "express": "^5.1.0",
+    "pg": "^8.17.1",
     "uuid": "^13.0.0",
     "ws": "^8.18.3"
   }
