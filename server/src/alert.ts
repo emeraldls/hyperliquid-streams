@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from "uuid";
 import { userStreams } from "./user-streams";
 
 type TradeField = "last_price" | "trade_price" | "trade_volume" | "bid" | "ask";

@@ -7,7 +7,6 @@ import {
   evaluateAlert,
   TriggerMode,
 } from "./alert";
-import { decode } from "cbor2";
 import { Request, Response } from "express";
 
 interface MMTWSPayload {
@@ -105,6 +104,7 @@ class SymbolStream {
       }
 
       try {
+        const { decode } = await import("cbor2");
         const payload = decode(bytes) as MMTWSPayload;
         const innerData = payload[3];
         const tradeData = decode(innerData);
