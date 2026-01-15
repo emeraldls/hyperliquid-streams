@@ -61,6 +61,7 @@ const buildRows = (
   }
 
   const maxCumulative = rows.at(-1)?.cumulative ?? 0;
+  // console.log(maxCumulative);
   return rows.map((row) => ({
     ...row,
     depthPct:
@@ -80,7 +81,7 @@ export const OrderBookPanel = ({
   isRefreshing,
   error,
   onRefresh,
-  depth = 12,
+  depth = 10,
 }: OrderBookPanelProps) => {
   const { bids, asks } = useMemo(() => {
     if (!book) {

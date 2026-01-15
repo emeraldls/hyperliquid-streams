@@ -1,3 +1,19 @@
+/*
+  So the workflow would be subscribe to the trades channel.
+  As trades are being received, you get the user who placed the order from the users list, it's index 0 (think is this for long position)
+
+  then given that userId, you subscribed to the userFills channel with that userId.
+
+  Now as trades are being received, you can match the trade hash with the fills received from the userFills channel.
+
+  From the userFills channel, you can get check if the liquidation field is present in the fill object.
+
+  If it is present, then that means the trade is a liquidation trade. 
+  
+  You can then extract the relevant information from the liquidation object, such as the liquidated user, mark price, and method of liquidation.
+  
+*/
+
 export interface WsTrade {
   coin: string;
   side: string;

@@ -5,6 +5,16 @@ import { HyperliquidClient } from "./hy-client";
 import { dataEvents } from "./data-events";
 import { DatabaseClient } from "./db";
 import type { WsBook } from "./types";
+import { apiCreateAlert, apiGetMyAlerts } from "./stream-alert";
+import { userStreams } from "./user-streams";
+import { URL } from "node:url";
+import cors from "cors";
+import {
+  polymarketRouter,
+  initPolymarket,
+  setupGracefulShutdown,
+  polymarketWss,
+} from "./polymarket";
 
 /*
  Application Workflow
@@ -17,9 +27,15 @@ const dbClient = new DatabaseClient();
 dbClient.boostrapTables();
 const client = new HyperliquidClient();
 
-const PORT = Number(process.env.PORT ?? 3000);
+const PORT = Number(process.env.PORT ?? 3002);
 
 const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// cors
+
+app.use(cors());
 
 app.use((_, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -78,9 +94,44 @@ app.get(["/orderbook", "/api/orderbook"], (req, res) => {
   }
 });
 
+app.post("/alert", apiCreateAlert);
+app.get("/alert", apiGetMyAlerts);
+
+app.get("/events", (req, res) => {
+  const userId = req.query.userId as string;
+  if (!userId) {
+    res.status(400).end();
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  res.write("\n");
+
+  let streams = userStreams.get(userId);
+  if (!streams) {
+    streams = new Set();
+    userStreams.set(userId, streams);
+  }
+
+  streams.add(res);
+
+  req.on("close", () => {
+    streams!.delete(res);
+    if (streams!.size === 0) {
+      userStreams.delete(userId);
+    }
+  });
+});
+
 app.get(["/health", "/api/health"], (_req, res) => {
   res.status(200).json({ status: "ok" });
 });
+
+// Mount Polymarket routes
+app.use("/api/pm", polymarketRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Not found" });
@@ -88,7 +139,7 @@ app.use((_req, res) => {
 
 const server = http.createServer(app);
 
-const wss = new WebSocketServer({ server, path: "/ws" });
+const wss = new WebSocketServer({ noServer: true });
 
 const broadcastBook = (book: WsBook) => {
   const payload = JSON.stringify({ channel: "l2Book", data: book });
@@ -113,9 +164,40 @@ wss.on("connection", (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`HTTP+WS server listening on http://localhost:${PORT}`);
+server.on("upgrade", (request, socket, head) => {
+  const pathname = request.url;
+
+  if (pathname === "/ws/pm") {
+    polymarketWss?.handleUpgrade(request, socket, head, (ws) => {
+      polymarketWss.emit("connection", ws, request);
+    });
+  } else if (pathname === "/ws") {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
 });
+
+const startServer = async () => {
+  console.log(`HTTP+WS server listening on http://localhost:${PORT}`);
+
+  // Initialize Polymarket module
+  try {
+    await initPolymarket();
+    console.log("Polymarket module initialized");
+  } catch (err) {
+    console.error("Failed to initialize Polymarket module:", err);
+  }
+
+  server.listen(PORT);
+};
+
+startServer();
+
+// Set up graceful shutdown for Polymarket
+setupGracefulShutdown();
 
 client.subscribeL2Book("BTC", (book) => {
   dbClient.saveL2Book(book);
